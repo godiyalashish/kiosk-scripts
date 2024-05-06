@@ -1,0 +1,35 @@
+display_message_and_retry(message:string) => void
+
+verify_employee(code:string) => employee_id / None
+
+capture_face() => captured_image_path
+
+get_face_encoding(image_path:string) => face_encodings : np_object
+
+get_face_encodings_and_save(image:string, empId:string) => void
+
+compare_faces(encodings:tuple(a:np_object,b:np_object)) => number
+
+get_stored_face_encodings(empId:string) => [array_of_paths] / NONE
+
+get_comparing_images(empId:string) => [array_of_paths]
+
+start_face_recognition(empId:string)=> [number]
+
+download_face_data(empId:string, local_directory:string) => True/False
+
+download_and_store_face_data(empId:string, local_directory:string) => true / false
+
+decode_qr_code(frame:image_data) => string
+
+scan_qr_code() => string / None
+
+check_result_with_threshold([result:number]) => True / False
+
+replace_capture_encoding(empId:string, encoding:np_object) => void
+
+markAttendance(empId:string, date:string) => True / False
+
+main() => void
+
+
