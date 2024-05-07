@@ -2,20 +2,19 @@ import requests
 import os
 import json
 import cv2
-import urllib.request
 import numpy as np
 import dlib
 import multiprocessing
 
 
-from config import URL;
+from config import URL, BASE_DIRECTORY;
 from get_mac_address import get_mac_address;
 
 
 
 detector = dlib.get_frontal_face_detector()
-shape_predictor = dlib.shape_predictor("/home/admin/attendance/faceRecognition/shape_predictor_68_face_landmarks.dat")
-face_recognition_model = dlib.face_recognition_model_v1("/home/admin/attendance/faceRecognition/dlib_face_recognition_resnet_model_v1.dat")
+shape_predictor = dlib.shape_predictor(f"python {BASE_DIRECTORY}/faceRecognition/shape_predictor_68_face_landmarks.dat")
+face_recognition_model = dlib.face_recognition_model_v1(f"python {BASE_DIRECTORY}/faceRecognition/dlib_face_recognition_resnet_model_v1.dat")
 
 missing_files = []
 
@@ -77,7 +76,7 @@ def delete_invalid_files_and_store_new_ones(folder_path, filenames, employee_id)
 
 def sync_data(data):
     for employee_id, filenames in data.items():
-        folder_path = os.path.join('/home/admin/attendance/faceRecognition', 'faceData', str(employee_id), 'encodings')
+        folder_path = os.path.join(BASE_DIRECTORY, 'faceRecognition', 'facedata', str(employee_id), 'encodings')
         if not os.path.exists(folder_path):
             os.makedirs(folder_path, exist_ok=True)
         delete_invalid_files_and_store_new_ones(folder_path, filenames, employee_id)
@@ -91,7 +90,7 @@ def get_face_encoding(image_path, empId, image_name):
     else:
         shape = shape_predictor(img, face[0])
         face_encoding = face_recognition_model.compute_face_descriptor(img, shape)
-        directory_path = os.path.join('/home/admin/attendance/faceRecognition' ,'faceData', str(empId),'encodings')
+        directory_path = os.path.join(BASE_DIRECTORY, 'faceRecognition' ,'facedata', str(empId),'encodings')
         if not os.path.exists(directory_path):
             os.makedirs(directory_path)
         file_path = os.path.join(directory_path, image_name+'.npy')
@@ -124,7 +123,7 @@ def get_image_and_store_encoding(args):
         response = requests.post(URL+'/kiosk/get-face-data', headers=headers, json=body)
         if response.status_code == 200:
             data = json.loads(response.text)
-            downlad_path = os.path.join('/home/admin/attendance/faceRecognition','faceData',str(empId), image)
+            downlad_path = os.path.join(BASE_DIRECTORY, 'faceRecognition','facedata',str(empId), image)
             res = download_image(data['url'], downlad_path, image)
             if res is None:
                 return
@@ -136,20 +135,22 @@ def get_image_and_store_encoding(args):
         return
 
 def main():
-    os.system("python /home/admin/attendance/display_message.py 'syncing' 'data...' ")
-    codes = get_employees_code_to_sync_data(os.path.join('/home/admin/attendance/faceRecognition','faceData'))
+    os.system(f"python {BASE_DIRECTORY}/display_message.py 'syncing' 'data...' ")
+    codes = get_employees_code_to_sync_data(os.path.join('faceRecognition','facedata'))
     if not codes:
-        os.system("python /home/admin/attendance/display_message.py 'Data' 'Synced' 'Successfully...' ")
+        print("no emp codes found")
+        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Data' 'Synced' 'Successfully...' ")
         return
     data = get_sync_data(codes)
     if data is None:
-        os.system("python /home/admin/attendance/display_message.py 'Failed' 'to sync' 'data' ")
+        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed' 'to sync' 'data' ")
         return
+    print(data)
     sync_data(data)
     if missing_files:
         pool = multiprocessing.Pool()
         pool.map(get_image_and_store_encoding, missing_files)
-    os.system("python /home/admin/attendance/display_message.py 'Data' 'Synced' 'Successfully...' ")
+    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Data' 'Synced' 'Successfully...' ")
 
 
 if __name__ == "__main__":

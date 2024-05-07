@@ -13,25 +13,19 @@ import requests
 from urllib.parse import urlparse
 from get_mac_address import get_mac_address
 from get_device_info import get_device_info
-from config import URL, THRESHOLD
-from datetime import datetime
-
-
-#/home/admin/attendance/display_message.py
-
+from config import URL, THRESHOLD, BASE_DIRECTORY
 
 GPIO.setmode(GPIO.BCM)
 touch_button_pin = 14
-GPIO.setup(touch_button_pin, GPIO.IN, pull_up_down = GPIO.PUD_DOWN)
+GPIO.setup(touch_button_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
 def display_message_and_retry(message):
-    command = "python /home/admin/attendance/display_message.py"
+    command = f"python {BASE_DIRECTORY}/display_message.py"
     for word in message.split():
         command += f" '{word}'"
     os.system(command)
-    
 
-os.system("python /home/admin/attendance/display_message.py 'Getting device' 'info..' ")
+os.system(f"python {BASE_DIRECTORY}/display_message.py 'Getting device' 'info..' ")
 device_mac_address = get_mac_address()
 device_info = get_device_info()
 while device_info is None or not device_info.get('isVerified'):
@@ -40,24 +34,21 @@ while device_info is None or not device_info.get('isVerified'):
     else:
         display_message_and_retry(device_info.get('message'))
     time.sleep(3)
-    os.system("python /home/admin/attendance/display_message.py 'Touch button' 'to retry' 'or restart device' ")
+    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to retry' 'or restart device' ")
     while GPIO.input(touch_button_pin) == GPIO.LOW:
         pass
-    os.system("python /home/admin/attendance/display_message.py 'Getting device' 'info..' ")
+    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Getting device' 'info..' ")
     device_info = get_device_info()
     if device_info is not None and device_info.get('isVerified'):
         break
 
-
 device_id = device_info.get('id')
 captured_encoding = None
 
-
 detector = dlib.get_frontal_face_detector()
-shape_predictor = dlib.shape_predictor("/home/admin/attendance/faceRecognition/shape_predictor_68_face_landmarks.dat")
-face_recognition_model = dlib.face_recognition_model_v1("/home/admin/attendance/faceRecognition/dlib_face_recognition_resnet_model_v1.dat")
-os.system("python /home/admin/attendance/display_message.py 'Loading face' 'recognition models..' ")
-
+shape_predictor = dlib.shape_predictor(f"{BASE_DIRECTORY}/faceRecognition/shape_predictor_68_face_landmarks.dat")
+face_recognition_model = dlib.face_recognition_model_v1(f"{BASE_DIRECTORY}/faceRecognition/dlib_face_recognition_resnet_model_v1.dat")
+os.system(f"python {BASE_DIRECTORY}/display_message.py 'Loading face' 'recognition models..' ")
 
 def verify_employee(code):
     try:
@@ -65,8 +56,8 @@ def verify_employee(code):
         if response.status_code == 200:
             data = response.json()
             id = data.get('id')
-            isRemoved = data.get('isRemoved');
-            active = data.get('active');
+            isRemoved = data.get('isRemoved')
+            active = data.get('active')
             if active == False or isRemoved == True:
                 return None
             else:
@@ -78,17 +69,21 @@ def verify_employee(code):
 
 def capture_face():
     try:
-        os.system("python /home/admin/attendance/display_message.py 'Capturing' 'face...' ")
+        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Capturing' 'face...' ")
         with picamera.PiCamera() as camera:
             camera.resolution=(720,576)
             #capturing image
             time.sleep(5)
             image_timestamp = str(time.time())
-            path = '/home/admin/Desktop/faceRecognition/capture_facedata/'+image_timestamp+'.jpg'
+            folder_path = f'{BASE_DIRECTORY}/faceRecognition/capture_facedata/'
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
+            path = os.path.join(folder_path, image_timestamp +'.jpg')
             camera.capture(path)
             return path
     except Exception as e:
-        os.system("python /home/admin/attendance/display_message.py 'Failed' 'to capture' 'face' ")
+        print(e)
+        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed' 'to capture' 'face' ")
         return None
 
 def get_face_encoding(image):
@@ -111,7 +106,7 @@ def get_face_encoding_and_save(image, empId):
     else:
         shape = shape_predictor(img, face[0])
         face_encoding = face_recognition_model.compute_face_descriptor(img, shape)
-        directory_path = os.path.join(os.getcwd(), 'facedata', str(empId), 'encodings')
+        directory_path = os.path.join(BASE_DIRECTORY, 'faceRecognition', 'facedata', str(empId), 'encodings')
         if not os.path.exists(directory_path):
             os.makedirs(directory_path)
         file_name = os.path.basename(image)
@@ -121,11 +116,14 @@ def get_face_encoding_and_save(image, empId):
 
 def compare_faces(encodings):
         face_encoding1, face_encoding2 = encodings
+        if face_encoding1 is None or face_encoding2 is None:
+            print("face_encoding is none")
+            return float('inf')
         distance = np.linalg.norm(np.array(face_encoding1) - np.array(face_encoding2))
         return distance
 
 def get_stored_face_encodings(empId):
-    directory_path = '/home/admin/Desktop/faceRecognition/facedata'
+    directory_path = f'{BASE_DIRECTORY}/faceRecognition/facedata'
     face_encoding_path = os.path.join(directory_path, str(empId), 'encodings')
     if not os.path.exists(face_encoding_path):
         return None
@@ -138,29 +136,33 @@ def get_stored_face_encodings(empId):
             return encodings_paths
 
 def get_comparing_images(empId):
-    directory_path = '/home/admin/Desktop/faceRecognition/facedata'
+    directory_path = f'{BASE_DIRECTORY}/faceRecognition/facedata'
     face_data_path = os.path.join(directory_path, str(empId))
     if not os.path.exists(face_data_path):
-        os.system("python /home/admin/attendance/display_message.py 'Getting face' 'data...' ")
-        resp = download_face_data(empId, directory_path)
+        os.makedirs(face_data_path)
+        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Getting face' 'data...' ")
+        resp = download_face_data(empId, face_data_path)
         if resp == True:
-            os.system("python /home/admin/attendance/display_message.py 'Face data' 'received' ")
+            os.system(f"python {BASE_DIRECTORY}/display_message.py 'Face data' 'received' ")
             return get_comparing_images(empId)
         else :
-            os.system("python /home/admin/attendance/display_message.py 'Failed to get' 'face data' ")
+            os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to get' 'face data' ")
             return []
     else:
         files = os.listdir(face_data_path)
-        if len(files) == 0:
-            os.system("python /home/admin/attendance/display_message.py 'Getting face' 'data...' ")
-            resp = download_face_data(empId, directory_path)
+        if not files:
+            os.system(f"python {BASE_DIRECTORY}/display_message.py 'Getting face' 'data...' ")
+            resp = download_face_data(empId, face_data_path)
             if resp == True:
-                os.system("python /home/admin/attendance/display_message.py 'Face data' 'received' ")
+                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Face data' 'received' ")
                 return get_comparing_images(empId)
             else :
-                os.system("python /home/admin/attendance/display_message.py 'Failed to get' 'face data' ")
+                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to get' 'face data' ")
+                return []
         else:
+            print("files exists", files)
             file_paths = [os.path.join(face_data_path, file) for file in files]
+            print("file paths", file_paths)
             return file_paths
 
 def start_face_recognition(empId):
@@ -172,16 +174,17 @@ def start_face_recognition(empId):
     face_encodings = get_stored_face_encodings(empId)
     if face_encodings is not None:
         pool = multiprocessing.Pool()
-        results = pool.map(compare_faces, [(captured_encoding, np.load(encoding_path)) for encoding_path in face_encodings])
+        result = pool.map(compare_faces, [(captured_encoding, np.load(encoding_path)) for encoding_path in face_encodings])
     else:
         images_to_compare_with = get_comparing_images(empId)
         if not image_to_be_compared:
             return result
         pool = multiprocessing.Pool()
-        results = pool.map(compare_faces, [(captured_encoding, get_face_encoding_and_save(image_path, empId)) for image_path in images_to_compare_with])
+        result = pool.map(compare_faces, [(captured_encoding, get_face_encoding_and_save(image_path, empId)) for image_path in images_to_compare_with])
     
     os.remove(image_to_be_compared)
-    return results
+    print(result)
+    return result
 
 def download_face_data(empId, local_directory):
     retry_count = 0
@@ -190,15 +193,16 @@ def download_face_data(empId, local_directory):
         retry_count += 1
         if retry_count > 3:
             break
-        os.system("python /home/admin/attendance/display_message.py 'Failed' 'to fetch' 'face data' ")
+        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed' 'to fetch' 'face data' ")
         time.sleep(2)
-        os.system("python /home/admin/attendance/display_message.py 'Touch to' 'retry' ")
+        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch to' 'retry' ")
         while GPIO.input(touch_button_pin) == GPIO.LOW:
             pass
         resp = download_and_store_face_data(empId, local_directory) 
     return resp
 
 def download_and_store_face_data(empId, local_directory):
+
     try:
         
         headers = {
@@ -235,19 +239,19 @@ def decode_qr_code(frame):
 
 def scan_qr_code():
     camera = cv2.VideoCapture(0)
-    os.system("python /home/admin/attendance/display_message.py 'Looking for' 'QR code' ")
+    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Looking for' 'QR code' ")
     data=''
     count = 0
     while True:
         if count>70:
             data = None
-            os.system("python /home/admin/attendance/display_message.py 'Failed to scan' 'QR code' 'try again..' ")
+            os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to scan' 'QR code' 'try again..' ")
             time.sleep(2)
             break
         count += 1
         ret, frame = camera.read()
         if not ret:
-            os.system("python /home/admin/attendance/display_message.py 'Failed to scan' 'QR code' ")
+            os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to scan' 'QR code' ")
             break
         data = decode_qr_code(frame)
         if data is not None:
@@ -263,13 +267,18 @@ def check_result_with_threshold(results):
     return False
 
 def replace_capture_encoding(empId, encoding):
-    file_path = os.path.join(os.cwd, 'facedata', str(empId),'encodings', 'capture.npy')
-    if(os.path.exists(file_path)):
-        os.remove(file_path)
-    np.save(file_path, np.array(encoding))
+    try:
+        file_path = os.path.join(BASE_DIRECTORY, 'faceRecognition', 'facedata', str(empId),'encodings', 'capture.npy')
+        if(os.path.exists(file_path)):
+            os.remove(file_path)
+        np.save(file_path, np.array(encoding))
+    except Exception as e:
+        print(e)
+        return
 
 def markAttendance(empId, date):
-    json_file_path = 'attendance.json'
+    json_file_path = f'{BASE_DIRECTORY}/faceRecognition/attendance.json'
+    
     new_entry = {"empId":empId, "date": date}
     url = URL+"/kiosk/mark-attendance"
     try:
@@ -283,11 +292,11 @@ def markAttendance(empId, date):
             with open(json_file_path, 'w') as file:
                 json.dump([new_entry], file, indent=4)
         
-        headers = {"device":get_mac_address(), "Content-Type": "application/json"}
+        headers = {"device":device_mac_address, "Content-Type": "application/json"}
         request_body=[]
         with open(json_file_path, 'r') as file:
-            request_body = json.load(file)
-        print(request_body)
+            request_body = {"attendance":json.load(file)}
+        print(request_body, headers)
         response = requests.post(url,headers=headers ,json=request_body)
         if response.status_code == 200:
             print("POST request successful!")
@@ -295,6 +304,7 @@ def markAttendance(empId, date):
             return True
         else:
             print("POST request failed. Status code:", response.status_code)
+            print(response.json())
             return False
 
     except Exception as e:
@@ -302,46 +312,46 @@ def markAttendance(empId, date):
         return False
 
 def main():
-    os.system("python /home/admin/attendance/display_message.py 'Touch button' 'to start...' ")
+    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
     while True:
         if GPIO.input(touch_button_pin) == GPIO.HIGH:
             employee_id = scan_qr_code()
             captured_encoding = None
             
             if employee_id is None:
-                os.system("python /home/admin/attendance/display_message.py 'Invalid' 'Employee Id'")
+                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Invalid' 'Employee Id'")
                 time.sleep(2)
-                os.system("python /home/admin/attendance/display_message.py 'Touch button' 'to start...' ")
+                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
                 continue
             else:
                 is_employee_verified = verify_employee(employee_id)
                 if is_employee_verified is None :
-                    os.system("python /home/admin/attendance/display_message.py 'Invalid' 'Employee Id'")
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Invalid' 'Employee Id'")
                     time.sleep(2)
-                    os.system("python /home/admin/attendance/display_message.py 'Touch button' 'to start...' ")
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
                     continue
-                os.system("python /home/admin/attendance/display_message.py 'Employee Id' '{}'".format(employee_id))
+                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Employee Id' '{employee_id}'")
                 face_comparision_results = start_face_recognition(employee_id)
                 if face_comparision_results is None or not face_comparision_results:
-                    os.system("python /home/admin/attendance/display_message.py 'Touch button' 'to start...' ")
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
                     continue
                 result = check_result_with_threshold(face_comparision_results)
                 if result == True:
-                    os.system("python /home/admin/attendance/display_message.py 'Face Recognised' 'successfully' ")
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Face Recognised' 'successfully' ")
                     resp = markAttendance(employee_id, datetime.now().strftime('%Y-%m-%d'))
                     if resp == False:
-                        os.system("python /home/admin/attendance/display_message.py 'Failed' 'to mark attendance' 'try again'")
+                        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed' 'to mark attendance' 'try again'")
                         time.sleep(1)
                     replace_capture_encoding(employee_id, captured_encoding)
-                    os.system("python /home/admin/attendance/display_message.py 'Touch button' 'to start...' ")
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
                     continue
                 else:
-                    os.system("python /home/admin/attendance/display_message.py 'Failed to' 'recognise please' 'try again'")
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to' 'recognise please' 'try again'")
                     time.sleep(2);
-                    os.system("python /home/admin/attendance/display_message.py 'Touch button' 'to start...' ")
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
                     continue
             time.sleep(.3)
         time.sleep(.1)
 
 if __name__ == "__main__":
-    main()
+    get_comparing_images(1234)
