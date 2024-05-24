@@ -15,9 +15,12 @@ from get_mac_address import get_mac_address
 from get_device_info import get_device_info
 from config import URL, THRESHOLD, BASE_DIRECTORY
 
-GPIO.setmode(GPIO.BCM)
-touch_button_pin = 14
-GPIO.setup(touch_button_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+
+def gpio_init(GPIO):
+    GPIO.setmode(GPIO.BCM)
+    touch_button_pin = 14
+    GPIO.setup(touch_button_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+    return touch_button_pin
 
 def display_message_and_retry(message):
     command = f"python {BASE_DIRECTORY}/display_message.py"
@@ -25,30 +28,35 @@ def display_message_and_retry(message):
         command += f" '{word}'"
     os.system(command)
 
-os.system(f"python {BASE_DIRECTORY}/display_message.py 'Getting device' 'info..' ")
-device_mac_address = get_mac_address()
-device_info = get_device_info()
-while device_info is None or not device_info.get('isVerified'):
-    if device_info is None:
-        display_message_and_retry("unable to connect")
-    else:
-        display_message_and_retry(device_info.get('message'))
-    time.sleep(3)
-    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to retry' 'or restart device' ")
-    while GPIO.input(touch_button_pin) == GPIO.LOW:
-        pass
+def verify_device_and_get_mac():
     os.system(f"python {BASE_DIRECTORY}/display_message.py 'Getting device' 'info..' ")
+    device_mac_address = get_mac_address()
     device_info = get_device_info()
-    if device_info is not None and device_info.get('isVerified'):
-        break
+    while device_info is None or not device_info.get('isVerified'):
+        if device_info is None:
+            display_message_and_retry("unable to connect")
+        else:
+            display_message_and_retry(device_info.get('message'))
+        time.sleep(3)
+        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to retry' 'or restart device' ")
+        while GPIO.input(touch_button_pin) == GPIO.LOW:
+            pass
+        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Getting device' 'info..' ")
+        device_info = get_device_info()
+        if device_info is not None and device_info.get('isVerified'):
+            break
+    return device_mac_address
 
-device_id = device_info.get('id')
-captured_encoding = None
-
+os.system(f"python {BASE_DIRECTORY}/display_message.py 'Loading face' 'recognition models..' ")
 detector = dlib.get_frontal_face_detector()
 shape_predictor = dlib.shape_predictor(f"{BASE_DIRECTORY}/faceRecognition/shape_predictor_68_face_landmarks.dat")
 face_recognition_model = dlib.face_recognition_model_v1(f"{BASE_DIRECTORY}/faceRecognition/dlib_face_recognition_resnet_model_v1.dat")
-os.system(f"python {BASE_DIRECTORY}/display_message.py 'Loading face' 'recognition models..' ")
+
+
+touch_button_pin = gpio_init(GPIO)    
+device_mac_address= verify_device_and_get_mac()
+captured_encoding = None
+
 
 def verify_employee(code):
     try:
@@ -82,7 +90,6 @@ def capture_face():
             camera.capture(path)
             return path
     except Exception as e:
-        print(e)
         os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed' 'to capture' 'face' ")
         return None
 
@@ -91,7 +98,7 @@ def get_face_encoding(image):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     face = detector(gray)
     if len(face)==0:
-        return 1
+        return None
     else:
         shape = shape_predictor(img, face[0])
         face_encoding = face_recognition_model.compute_face_descriptor(img, shape)
@@ -102,7 +109,7 @@ def get_face_encoding_and_save(image, empId):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     face = detector(gray)
     if len(face)==0:
-        return 1
+        return None
     else:
         shape = shape_predictor(img, face[0])
         face_encoding = face_recognition_model.compute_face_descriptor(img, shape)
@@ -113,12 +120,12 @@ def get_face_encoding_and_save(image, empId):
         file_path = os.path.join(directory_path, f"{file_name}.npy")
         np.save(file_path, np.array(face_encoding))
         os.remove(image)
+        return face_encoding
 
 def compare_faces(encodings):
         face_encoding1, face_encoding2 = encodings
         if face_encoding1 is None or face_encoding2 is None:
-            print("face_encoding is none")
-            return float('inf')
+            return None
         distance = np.linalg.norm(np.array(face_encoding1) - np.array(face_encoding2))
         return distance
 
@@ -160,21 +167,20 @@ def get_comparing_images(empId):
                 os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to get' 'face data' ")
                 return []
         else:
-            print("files exists", files)
             file_paths = [os.path.join(face_data_path, file) for file in files]
-            print("file paths", file_paths)
             return file_paths
 
 def start_face_recognition(empId):
     result=[]
     image_to_be_compared = capture_face()
+    
     if image_to_be_compared is None:
         return None
     captured_encoding = get_face_encoding(image_to_be_compared)
     face_encodings = get_stored_face_encodings(empId)
     if face_encodings is not None:
         pool = multiprocessing.Pool()
-        result = pool.map(compare_faces, [(captured_encoding, np.load(encoding_path)) for encoding_path in face_encodings])
+        result = pool.map(compare_faces, [(captured_encoding, np.load(encoding_path, allow_pickle=True)) for encoding_path in face_encodings])
     else:
         images_to_compare_with = get_comparing_images(empId)
         if not image_to_be_compared:
@@ -183,7 +189,6 @@ def start_face_recognition(empId):
         result = pool.map(compare_faces, [(captured_encoding, get_face_encoding_and_save(image_path, empId)) for image_path in images_to_compare_with])
     
     os.remove(image_to_be_compared)
-    print(result)
     return result
 
 def download_face_data(empId, local_directory):
@@ -227,7 +232,6 @@ def download_and_store_face_data(empId, local_directory):
         return True
 
     except Exception as e:
-        print(f"Error: {e}")
         return False
 
 def decode_qr_code(frame):
@@ -243,7 +247,7 @@ def scan_qr_code():
     data=''
     count = 0
     while True:
-        if count>70:
+        if count>40:
             data = None
             os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to scan' 'QR code' 'try again..' ")
             time.sleep(2)
@@ -273,7 +277,6 @@ def replace_capture_encoding(empId, encoding):
             os.remove(file_path)
         np.save(file_path, np.array(encoding))
     except Exception as e:
-        print(e)
         return
 
 def markAttendance(empId, date):
@@ -296,19 +299,14 @@ def markAttendance(empId, date):
         request_body=[]
         with open(json_file_path, 'r') as file:
             request_body = {"attendance":json.load(file)}
-        print(request_body, headers)
         response = requests.post(url,headers=headers ,json=request_body)
         if response.status_code == 200:
-            print("POST request successful!")
             os.remove(json_file_path)
             return True
         else:
-            print("POST request failed. Status code:", response.status_code)
-            print(response.json())
             return False
 
     except Exception as e:
-        print("Error:", e)
         return False
 
 def main():
@@ -354,4 +352,4 @@ def main():
         time.sleep(.1)
 
 if __name__ == "__main__":
-    get_comparing_images(1234)
+    main()

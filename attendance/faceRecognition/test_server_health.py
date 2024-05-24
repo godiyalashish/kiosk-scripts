@@ -14,11 +14,11 @@ def check_health(url):
         response = requests.get(url)
         return response
     except requests.RequestException as e:
-        return e
+        return None
 
 if __name__ == "__main__":
     response = check_health(URL)
-    while response.status_code != 200:
+    while not response or response.status_code != 200:
         if isinstance(response, requests.Response):  
             os.system(f"python {BASE_DIRECTORY}/display_message.py 'cannot connect' 'to server'")
             time.sleep(3)
@@ -31,8 +31,10 @@ if __name__ == "__main__":
         while GPIO.input(touch_button_pin) == GPIO.LOW:
             pass
         
+        os.system(f"python {BASE_DIRECTORY}/display_message.py ' checking' 'server' 'connection' ")
         response = check_health(URL)
 
     if(response.status_code == 200):
         os.system(f"python {BASE_DIRECTORY}/display_message.py 'Server' 'connection' 'successfull'")
         
+

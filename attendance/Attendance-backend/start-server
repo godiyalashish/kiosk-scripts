@@ -1,0 +1,32 @@
+#!/bin/bash
+
+
+TARGET_DIR="/home/admin/attendance/Attendance-backend"
+
+export NVM_DIR="/home/admin/.nvm"
+
+
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+
+nvm use default
+
+
+python /home/admin/attendance/display_message.py "starting" "server..."
+
+
+cd "$TARGET_DIR" || { python /home/admin/attendance/display_message.py "Failed to" "start server"; exit 1; }
+
+npm run start &
+
+is_port_open() {
+    nc -z localhost 1337
+}
+
+while ! is_port_open; do
+    sleep 1
+done
+
+python /home/admin/attendance/display_message.py "server" "started"
+
