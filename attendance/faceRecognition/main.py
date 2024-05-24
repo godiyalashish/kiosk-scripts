@@ -137,7 +137,7 @@ def get_stored_face_encodings(empId):
     else:
         files = os.listdir(face_encoding_path)
         if len(files) == 0:
-            return np.zeros(128)
+            return None
         else:
             encodings_paths = [os.path.join(face_encoding_path, file) for file in files]
             return encodings_paths
@@ -173,10 +173,12 @@ def get_comparing_images(empId):
 def start_face_recognition(empId):
     result=[]
     image_to_be_compared = capture_face()
-    
     if image_to_be_compared is None:
         return None
+    global captured_encoding
     captured_encoding = get_face_encoding(image_to_be_compared)
+    if captured_encoding is None:
+        return None
     face_encodings = get_stored_face_encodings(empId)
     if face_encodings is not None:
         pool = multiprocessing.Pool()
@@ -314,8 +316,8 @@ def main():
     while True:
         if GPIO.input(touch_button_pin) == GPIO.HIGH:
             employee_id = scan_qr_code()
-            captured_encoding = None
-            
+            global captured_encoding
+            captured_encoding = None 
             if employee_id is None:
                 os.system(f"python {BASE_DIRECTORY}/display_message.py 'Invalid' 'Employee Id'")
                 time.sleep(2)
