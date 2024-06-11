@@ -40,13 +40,18 @@ def get_sync_data(codes):
         return None
 
 def get_employees_code_to_sync_data(folder_path):
-    folder_names = []
-    if not os.path.exists(folder_path):
+    print(folder_path)
+    try:
+        folder_names = []
+        if not os.path.exists(folder_path):
+            return folder_names
+        for item in os.listdir(folder_path):
+            if os.path.isdir(os.path.join(folder_path, item)):
+                folder_names.append(item)
         return folder_names
-    for item in os.listdir(folder_path):
-        if os.path.isdir(os.path.join(folder_path, item)):
-            folder_names.append(item)
-    return folder_names
+    except Exception as e:
+        print(e)
+
 
 def delete_invalid_files_and_store_new_ones(folder_path, filenames, employee_id):
     
@@ -136,7 +141,7 @@ def get_image_and_store_encoding(args):
 
 def main():
     os.system(f"python {BASE_DIRECTORY}/display_message.py 'syncing' 'data...' ")
-    codes = get_employees_code_to_sync_data(os.path.join('faceRecognition','facedata'))
+    codes = get_employees_code_to_sync_data(os.path.join(BASE_DIRECTORY, 'faceRecognition','facedata'))
     if not codes:
         print("no emp codes found")
         os.system(f"python {BASE_DIRECTORY}/display_message.py 'Data' 'Synced' 'Successfully...' ")
@@ -145,7 +150,6 @@ def main():
     if data is None:
         os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed' 'to sync' 'data' ")
         return
-    print(data)
     sync_data(data)
     if missing_files:
         pool = multiprocessing.Pool()

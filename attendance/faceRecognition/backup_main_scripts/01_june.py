@@ -15,7 +15,6 @@ from get_mac_address import get_mac_address
 from get_device_info import get_device_info
 from config import URL, THRESHOLD, BASE_DIRECTORY
 
-isRebooted = True
 
 def gpio_init(GPIO):
     GPIO.setmode(GPIO.BCM)
@@ -29,12 +28,10 @@ def display_message_and_retry(message):
         command += f" '{word}'"
     os.system(command)
 
-def verify_device():
-    global isRebooted
+def verify_device_and_get_mac():
     os.system(f"python {BASE_DIRECTORY}/display_message.py 'Getting device' 'info..' ")
-    device_info = get_device_info(isRebooted)
-    if isRebooted is True:
-        isRebooted = False
+    device_mac_address = get_mac_address()
+    device_info = get_device_info()
     while device_info is None or not device_info.get('isVerified'):
         if device_info is None:
             display_message_and_retry("unable to connect")
@@ -48,6 +45,7 @@ def verify_device():
         device_info = get_device_info()
         if device_info is not None and device_info.get('isVerified'):
             break
+    return device_mac_address
 
 os.system(f"python {BASE_DIRECTORY}/display_message.py 'Loading face' 'recognition models..' ")
 detector = dlib.get_frontal_face_detector()
@@ -56,45 +54,25 @@ face_recognition_model = dlib.face_recognition_model_v1(f"{BASE_DIRECTORY}/faceR
 
 
 touch_button_pin = gpio_init(GPIO)    
-device_mac_address= get_mac_address()
+device_mac_address= verify_device_and_get_mac()
 captured_encoding = None
 
 
 def verify_employee(code):
     try:
-        response = requests.get(URL + '/kiosk/employee/info', headers={"device": device_mac_address, "employee_id": str(code)})
+        response = requests.get(URL+'/kiosk/employee/info', headers={"device":device_mac_address, "employee_id":str(code)})
         if response.status_code == 200:
             data = response.json()
             id = data.get('id')
-            
-            for key, value in data.items():
-                if key == "active":
-                    if value is False:
-                        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Employee' 'Deactivated!'")
-                        return None
-
-                elif key == "isRemoved":
-                    if value is True:
-                        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Employee' 'Removed'")
-                        return None
-                    
-                elif key == "isAlreadyMarkedPresent":
-                    if value is True:
-                        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Already' 'Marked' 'Present'")
-                        return None
-
-                elif key == "isAlreadyMarkedAbsent":
-                    if value is True:
-                        os.system(f"python {BASE_DIRECTORY}/display_message.py 'You are' 'Marked' 'Absent'")
-                        return None
-
-            return id
-
+            isRemoved = data.get('isRemoved')
+            active = data.get('active')
+            if active == False or isRemoved == True:
+                return None
+            else:
+                return id
         else:
-            os.system(f"python {BASE_DIRECTORY}/display_message.py 'Invalid' 'Employee Id'")
             return None
     except Exception as e:
-        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Invalid' 'Employee Id'")
         return None
 
 def capture_face():
@@ -115,15 +93,20 @@ def capture_face():
         os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed' 'to capture' 'face' ")
         return None
 
-def get_face_encoding(args):
-    faces,frame = args
+def get_face_encoding(image):
+    img = cv2.imread(image)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    print(f"{BASE_DIRECTORY}/haarcascade_frontalface_default.xml")
+    face_cascade = cv2.CascadeClassifier(f"{BASE_DIRECTORY}/faceRecognition/haarcascade_frontalface_default.xml")
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+
     if len(faces)==0:
         return None
     else:
         (x, y, w, h) = faces[0]
         dlib_rect = dlib.rectangle(int(x), int(y), int(x + w), int(y + h))
-        shape = shape_predictor(frame, dlib_rect)
-        face_encoding = face_recognition_model.compute_face_descriptor(frame, shape)
+        shape = shape_predictor(img, dlib_rect)
+        face_encoding = face_recognition_model.compute_face_descriptor(img, shape)
         return face_encoding
 
 def get_face_encoding_and_save(image, empId):
@@ -192,10 +175,13 @@ def get_comparing_images(empId):
             file_paths = [os.path.join(face_data_path, file) for file in files]
             return file_paths
 
-def start_face_recognition(empId, faces, frame):
+def start_face_recognition(empId):
     result=[]
+    image_to_be_compared = capture_face()
+    if image_to_be_compared is None:
+        return None
     global captured_encoding
-    captured_encoding = get_face_encoding((faces, frame))
+    captured_encoding = get_face_encoding(image_to_be_compared)
     if captured_encoding is None:
         return None
     face_encodings = get_stored_face_encodings(empId)
@@ -204,8 +190,12 @@ def start_face_recognition(empId, faces, frame):
         result = pool.map(compare_faces, [(captured_encoding, np.load(encoding_path, allow_pickle=True)) for encoding_path in face_encodings])
     else:
         images_to_compare_with = get_comparing_images(empId)
+        if not image_to_be_compared:
+            return result
         pool = multiprocessing.Pool()
         result = pool.map(compare_faces, [(captured_encoding, get_face_encoding_and_save(image_path, empId)) for image_path in images_to_compare_with])
+    
+    os.remove(image_to_be_compared)
     return result
 
 def download_face_data(empId, local_directory):
@@ -264,6 +254,12 @@ def scan_qr_code():
     data=''
     count = 0
     while True:
+        if count>40:
+            data = None
+            os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to scan' 'QR code' 'try again..' ")
+            time.sleep(2)
+            break
+        count += 1
         ret, frame = camera.read()
         if not ret:
             os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to scan' 'QR code' ")
@@ -290,10 +286,10 @@ def replace_capture_encoding(empId, encoding):
     except Exception as e:
         return
 
-def markAttendance(empId, date, markedAt):
+def markAttendance(empId, date):
     json_file_path = f'{BASE_DIRECTORY}/faceRecognition/attendance.json'
     
-    new_entry = {"empId":empId, "date": date, "markedAt":markedAt}
+    new_entry = {"empId":empId, "date": date}
     url = URL+"/kiosk/mark-attendance"
     try:
         if os.path.exists(json_file_path):
@@ -320,79 +316,46 @@ def markAttendance(empId, date, markedAt):
     except Exception as e:
         return False
 
-def detect_faces(frame, face_cascade_path):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    face_cascade = cv2.CascadeClassifier(face_cascade_path)
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-    #faces = detector(gray)
-    return faces
-
-def scan_qr_and_face():
-    camera = cv2.VideoCapture(0)
-    if not camera.isOpened():
-        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to access' 'camera' ")
-        return None, [], None
-
-    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Looking for' 'QR and face' ")
-    face_cascade_path = f"{BASE_DIRECTORY}/faceRecognition/haarcascade_frontalface_default.xml"
-
-    data = ''
-    faces = []
-
-    with multiprocessing.Pool(processes=2) as pool:
-        while True:
-            ret, frame = camera.read()
-            if not ret:
-                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to scan'")
-                break
-
-            qr_result = pool.apply_async(decode_qr_code, (frame,))
-            face_result = pool.apply_async(detect_faces, (frame, face_cascade_path))
-
-            data = qr_result.get()
-            faces = face_result.get()
-
-            print(data, faces)
-
-            if data is not None and len(faces) != 0:
-                os.system(f"python {BASE_DIRECTORY}/display_message.py 'QR and face' 'detected' ")
-                break
-
-    camera.release()
-    cv2.destroyAllWindows()
-    return data, faces, frame
-
 def main():
+    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
     while True:
-        employee_id, faces, frame = scan_qr_and_face()
-        if employee_id is not None:
+        if GPIO.input(touch_button_pin) == GPIO.HIGH:
+            employee_id = scan_qr_code()
             global captured_encoding
-            captured_encoding = None
-            verify_device()
-            is_employee_verified = verify_employee(employee_id)
-            if is_employee_verified is None :
+            captured_encoding = None 
+            if employee_id is None:
+                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Invalid' 'Employee Id'")
                 time.sleep(2)
-                continue
-            os.system(f"python {BASE_DIRECTORY}/display_message.py 'Employee Id' '{employee_id}'")
-            face_comparision_results = start_face_recognition(employee_id,faces,frame)
-            if face_comparision_results is None or not face_comparision_results:
-                continue
-            result = check_result_with_threshold(face_comparision_results)
-            if result == True:
-                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Face Recognised' 'successfully' ")
-                current_timestamp = datetime.now()
-                print(current_timestamp)
-                resp = markAttendance(employee_id, current_timestamp.strftime('%Y-%m-%d'), current_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f'))
-                if resp == False:
-                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed' 'to mark attendance' 'try again'")
-                    time.sleep(1)
-                replace_capture_encoding(employee_id, captured_encoding)
+                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
                 continue
             else:
-                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to' 'recognise please' 'try again'")
-                time.sleep(2);
-                continue
-            # time.sleep(.3)
+                is_employee_verified = verify_employee(employee_id)
+                if is_employee_verified is None :
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Invalid' 'Employee Id'")
+                    time.sleep(2)
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
+                    continue
+                os.system(f"python {BASE_DIRECTORY}/display_message.py 'Employee Id' '{employee_id}'")
+                face_comparision_results = start_face_recognition(employee_id)
+                if face_comparision_results is None or not face_comparision_results:
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
+                    continue
+                result = check_result_with_threshold(face_comparision_results)
+                if result == True:
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Face Recognised' 'successfully' ")
+                    resp = markAttendance(employee_id, datetime.now().strftime('%Y-%m-%d'))
+                    if resp == False:
+                        os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed' 'to mark attendance' 'try again'")
+                        time.sleep(1)
+                    replace_capture_encoding(employee_id, captured_encoding)
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
+                    continue
+                else:
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Failed to' 'recognise please' 'try again'")
+                    time.sleep(2);
+                    os.system(f"python {BASE_DIRECTORY}/display_message.py 'Touch button' 'to start...' ")
+                    continue
+            time.sleep(.3)
         time.sleep(.1)
 
 if __name__ == "__main__":
